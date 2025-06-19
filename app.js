@@ -50,7 +50,6 @@ class App {
 
     this.loadingBar = new LoadingBar();
     this.loadCollege();
-    this.addNew3DObjects();
 
     this.immersive = false;
 
@@ -108,6 +107,7 @@ class App {
       });
 
       this.loadingBar.visible = false;
+      this.loadCarModel();
       this.setupXR();
     },
     xhr => {
@@ -116,35 +116,17 @@ class App {
     err => console.error(err));
   }
 
-  addNew3DObjects() {
-    // Fan
-    const fanGeo = new THREE.CylinderGeometry(0.05, 0.05, 2, 12);
-    const fanMat = new THREE.MeshStandardMaterial({ color: 0x666666 });
-    this.fan = new THREE.Mesh(fanGeo, fanMat);
-    this.fan.rotation.z = Math.PI / 2;
-    this.fan.position.set(5, 3, 0);
-    this.scene.add(this.fan);
-
-    // Hologram
-    const holoGeo = new THREE.PlaneGeometry(2, 1);
-    const holoMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, opacity: 0.5, transparent: true });
-    this.hologram = new THREE.Mesh(holoGeo, holoMat);
-    this.hologram.position.set(-4, 2, -4);
-    this.scene.add(this.hologram);
-
-    // Trees
-    for (let i = 0; i < 5; i++) {
-      const trunk = new THREE.CylinderGeometry(0.1, 0.1, 1, 6);
-      const leaves = new THREE.SphereGeometry(0.5, 8, 8);
-      const tree = new THREE.Group();
-      const trunkMesh = new THREE.Mesh(trunk, new THREE.MeshStandardMaterial({ color: 0x8B4513 }));
-      const leavesMesh = new THREE.Mesh(leaves, new THREE.MeshStandardMaterial({ color: 0x228B22 }));
-      leavesMesh.position.y = 0.75;
-      tree.add(trunkMesh);
-      tree.add(leavesMesh);
-      tree.position.set(Math.random() * 20 - 10, 0, Math.random() * 20 - 10);
-      this.scene.add(tree);
-    }
+  loadCarModel() {
+    const loader = new GLTFLoader().setPath(this.assetsPath);
+    loader.load('car.glb', gltf => {
+      const car = gltf.scene;
+      car.scale.set(0.7, 0.7, 0.7);
+      car.position.set(2, 0, -5);
+      car.rotation.y = Math.PI / 2;
+      this.scene.add(car);
+    }, undefined, error => {
+      console.error('Failed to load car model:', error);
+    });
   }
 
   setupXR() {
@@ -181,21 +163,6 @@ class App {
     };
     this.ui = new CanvasUI(content, config);
     this.scene.add(this.ui.mesh);
-
-    const teleportSpots = [
-      { name: 'Entrance', position: new THREE.Vector3(0, 0, 10) },
-      { name: 'Library', position: new THREE.Vector3(15, 0, -5) },
-      { name: 'Cafeteria', position: new THREE.Vector3(-10, 0, -8) }
-    ];
-    teleportSpots.forEach(spot => {
-      const geo = new THREE.CircleGeometry(0.5, 32);
-      const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
-      const circle = new THREE.Mesh(geo, mat);
-      circle.rotation.x = -Math.PI / 2;
-      circle.position.copy(spot.position);
-      circle.userData.teleport = spot.position;
-      this.scene.add(circle);
-    });
 
     this.renderer.setAnimationLoop(this.render.bind(this));
   }
@@ -247,7 +214,6 @@ class App {
 
   render() {
     const dt = this.clock.getDelta();
-    if (this.fan) this.fan.rotation.y += dt * 3;
 
     if (this.renderer.xr.isPresenting) {
       if (this.selectPressed || (this.useGaze && this.gazeController?.mode === GazeController.Modes.MOVE)) {
@@ -282,6 +248,9 @@ class App {
     this.stats.update();
     this.renderer.render(this.scene, this.camera);
   }
+}
+
+export { App };
 }
 
 export { App };
