@@ -1,4 +1,4 @@
-// app.js (WASD for web + mouse look left/right)
+// app.js — adds WASD movement for web + FPS-style mouse look (yaw + pitch)
 import * as THREE from './libs/three/three.module.js';
 import { GLTFLoader } from './libs/three/jsm/GLTFLoader.js';
 import { DRACOLoader } from './libs/three/jsm/DRACOLoader.js';
@@ -7,7 +7,7 @@ import { Stats } from './libs/stats.module.js';
 import { LoadingBar } from './libs/LoadingBar.js';
 import { VRButton } from './libs/VRButton.js';
 import { CanvasUI } from './libs/CanvasUI.js';
-import { GazeController } from './libs/GazeController.js'
+import { GazeController } from './libs/GazeController.js';
 import { XRControllerModelFactory } from './libs/three/jsm/XRControllerModelFactory.js';
 
 class App{
@@ -19,13 +19,21 @@ class App{
         
 		this.camera = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 0.01, 500 );
 		this.camera.position.set( 0, 1.6, 0 );
-        
+
+        // --- rig: yaw on dolly, pitch on pitchObject, camera on pitchObject ---
         this.dolly = new THREE.Object3D();
         this.dolly.position.set(0, 0, 10);
-        this.dolly.add( this.camera );
+
+        this.pitchObject = new THREE.Object3D();
+        this.pitchObject.rotation.x = 0;
+
+        this.dolly.add( this.pitchObject );
+        this.pitchObject.add( this.camera );
+
         this.dummyCam = new THREE.Object3D();
         this.camera.add( this.dummyCam );
-        
+        // ---------------------------------------------------------------------
+
 		this.scene = new THREE.Scene();
         this.scene.add( this.dolly );
         
@@ -39,24 +47,24 @@ class App{
 		container.appendChild( this.renderer.domElement );
         this.setEnvironment();
 	
-        // === Web controls (WASD + mouse yaw) ===
+        // === Web controls (WASD + FPS mouse look) ===
         this.keys = { w:false, a:false, s:false, d:false };
         this.keyboardSpeed = 2.5;           // m/s
-        this.yaw = this.dolly.rotation.y;   // left/right
+        this.yaw = 0;                       // left/right
+        this.pitch = 0;                     // up/down
         this.mouseSensitivity = 0.0025;
+        this.maxPitch = Math.PI/2 - 0.01;
 
-        // Canvas focus + pointer lock on click
+        // Make canvas focusable and lock pointer on click (non-VR)
         this.renderer.domElement.setAttribute('tabindex', '0');
         this.renderer.domElement.addEventListener('click', () => {
             this.renderer.domElement.focus();
-            if (!this.renderer.xr.isPresenting) {
-                this.renderer.domElement.requestPointerLock();
-            }
+            if (!this.renderer.xr.isPresenting) this.renderer.domElement.requestPointerLock();
         });
 
         this.bindKeyboard();
         this.bindMouseLook();
-        // =======================================
+        // ============================================
 
         window.addEventListener( 'resize', this.resize.bind(this) );
         
@@ -75,12 +83,11 @@ class App{
         
         this.immersive = false;
         
-        const self = this;
         fetch('./college.json')
             .then(response => response.json())
             .then(obj =>{
-                self.boardShown = '';
-                self.boardData = obj;
+                this.boardShown = '';
+                this.boardData = obj;
             });
 	}
 	
@@ -89,14 +96,13 @@ class App{
         const pmremGenerator = new THREE.PMREMGenerator( this.renderer );
         pmremGenerator.compileEquirectangularShader();
         
-        const self = this;
         loader.load( './assets/hdr/venice_sunset_1k.hdr', ( texture ) => {
           const envMap = pmremGenerator.fromEquirectangular( texture ).texture;
           pmremGenerator.dispose();
-          self.scene.environment = envMap;
+          this.scene.environment = envMap;
         }, undefined, ()=>{
-            console.error( 'An error occurred setting the environment' );
-        });
+            console.error( 'An error occurred setting the environment');
+        } );
     }
     
     resize(){
@@ -144,6 +150,7 @@ class App{
                 college.add( obj );
                 
                 self.loadingBar.visible = false;
+			
                 self.setupXR();
 			},
 			function ( xhr ) {
@@ -157,20 +164,24 @@ class App{
     
     setupXR(){
         this.renderer.xr.enabled = true;
+
         const btn = new VRButton( this.renderer );
         
         const self = this;
+        
         const timeoutId = setTimeout( connectionTimeout, 2000 );
         
         function onSelectStart(){ this.userData.selectPressed = true; }
         function onSelectEnd(){ this.userData.selectPressed = false; }
         function onConnected(){ clearTimeout( timeoutId ); }
+        
         function connectionTimeout(){
             self.useGaze = true;
             self.gazeController = new GazeController( self.scene, self.dummyCam );
         }
         
         this.controllers = this.buildControllers( this.dolly );
+        
         this.controllers.forEach( ( controller ) =>{
             controller.addEventListener( 'selectstart', onSelectStart );
             controller.addEventListener( 'selectend', onSelectEnd );
@@ -193,11 +204,13 @@ class App{
     
     buildControllers( parent = this.scene ){
         const controllerModelFactory = new XRControllerModelFactory();
+
         const geometry = new THREE.BufferGeometry().setFromPoints( [ new THREE.Vector3( 0, 0, 0 ), new THREE.Vector3( 0, 0, -1 ) ] );
         const line = new THREE.Line( geometry );
         line.scale.z = 0;
         
         const controllers = [];
+        
         for(let i=0; i<=1; i++){
             const controller = this.renderer.xr.getController( i );
             controller.add( line.clone() );
@@ -209,10 +222,11 @@ class App{
             grip.add( controllerModelFactory.createControllerModel( grip ) );
             parent.add( grip );
         }
+        
         return controllers;
     }
 
-    // === Web: keyboard + mouse yaw ===
+    // ================= Web: FPS controls =================
     bindKeyboard(){
         const down = (e)=>{
             const k = e.key.toLowerCase();
@@ -230,16 +244,17 @@ class App{
     }
 
     bindMouseLook(){
+        // Yaw (left/right) on dolly, pitch (up/down) on pitchObject
         window.addEventListener('mousemove', (e)=>{
             if (this.renderer.xr.isPresenting) return;
             if (document.pointerLockElement !== this.renderer.domElement) return;
-            this.yaw -= e.movementX * this.mouseSensitivity; // left/right look
-            this.dolly.rotation.y = this.yaw;
-        });
-        document.addEventListener('pointerlockchange', ()=>{
-            if (document.pointerLockElement !== this.renderer.domElement) {
-                // pointer unlocked; nothing to do
-            }
+
+            this.yaw   -= e.movementX * this.mouseSensitivity;
+            this.pitch -= e.movementY * this.mouseSensitivity;
+            this.pitch = Math.max(-this.maxPitch, Math.min(this.maxPitch, this.pitch));
+
+            this.dolly.rotation.y = this.yaw;              // yaw
+            this.pitchObject.rotation.x = this.pitch;      // pitch
         });
     }
 
@@ -250,10 +265,10 @@ class App{
         const wallLimit = 1.3;
         const speed = this.keyboardSpeed;
 
-        // Basis from dolly yaw
+        // Forward (camera facing on XZ), Right = forward × up
         const forwardVec = new THREE.Vector3(0,0,-1).applyQuaternion(this.dolly.quaternion);
         forwardVec.y = 0; forwardVec.normalize();
-        const rightVec = new THREE.Vector3().crossVectors(this.up, forwardVec).normalize(); // right-hand
+        const rightVec = new THREE.Vector3().crossVectors(forwardVec, this.up).normalize(); // right
 
         const moveDir = new THREE.Vector3()
             .addScaledVector(forwardVec, forward)
@@ -302,7 +317,7 @@ class App{
             this.dolly.position.copy(hit[0].point);
         }
     }
-    // ================================
+    // =====================================================
 
     // Original forward move for VR trigger/gaze
     moveDolly(dt){
@@ -374,10 +389,10 @@ class App{
         this.boardShown = name;
     }
 
-	render( timestamp, frame ){
+	render(){
         const dt = this.clock.getDelta();
 
-        // Web (non-VR): WASD movement
+        // Web (non-VR): WASD + mouse look
         if (!this.renderer.xr.isPresenting){
             const forward = (this.keys.w ? 1 : 0) + (this.keys.s ? -1 : 0);
             const strafe  = (this.keys.d ? 1 : 0) + (this.keys.a ? -1 : 0);
