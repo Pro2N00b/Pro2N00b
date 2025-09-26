@@ -1,4 +1,4 @@
-// app.js
+// app.js (WASD for web + mouse look left/right)
 import * as THREE from './libs/three/three.module.js';
 import { GLTFLoader } from './libs/three/jsm/GLTFLoader.js';
 import { DRACOLoader } from './libs/three/jsm/DRACOLoader.js';
@@ -7,7 +7,7 @@ import { Stats } from './libs/stats.module.js';
 import { LoadingBar } from './libs/LoadingBar.js';
 import { VRButton } from './libs/VRButton.js';
 import { CanvasUI } from './libs/CanvasUI.js';
-import { GazeController } from './libs/GazeController.js';
+import { GazeController } from './libs/GazeController.js'
 import { XRControllerModelFactory } from './libs/three/jsm/XRControllerModelFactory.js';
 
 class App{
@@ -37,14 +37,27 @@ class App{
 		this.renderer.setSize( window.innerWidth, window.innerHeight );
 		this.renderer.outputEncoding = THREE.sRGBEncoding;
 		container.appendChild( this.renderer.domElement );
-
-        // Ensure canvas can receive keyboard focus (for WASD)
-        this.renderer.domElement.setAttribute('tabindex', '0');
-        this.renderer.domElement.addEventListener('click', () => this.renderer.domElement.focus());
-        this.renderer.domElement.focus();
-
         this.setEnvironment();
 	
+        // === Web controls (WASD + mouse yaw) ===
+        this.keys = { w:false, a:false, s:false, d:false };
+        this.keyboardSpeed = 2.5;           // m/s
+        this.yaw = this.dolly.rotation.y;   // left/right
+        this.mouseSensitivity = 0.0025;
+
+        // Canvas focus + pointer lock on click
+        this.renderer.domElement.setAttribute('tabindex', '0');
+        this.renderer.domElement.addEventListener('click', () => {
+            this.renderer.domElement.focus();
+            if (!this.renderer.xr.isPresenting) {
+                this.renderer.domElement.requestPointerLock();
+            }
+        });
+
+        this.bindKeyboard();
+        this.bindMouseLook();
+        // =======================================
+
         window.addEventListener( 'resize', this.resize.bind(this) );
         
         this.clock = new THREE.Clock();
@@ -58,17 +71,10 @@ class App{
 		container.appendChild( this.stats.dom );
         
 		this.loadingBar = new LoadingBar();
-		
 		this.loadCollege();
         
         this.immersive = false;
-
-        // --- Web (desktop) keyboard locomotion (WASD) ---
-        this.keys = { w:false, a:false, s:false, d:false };
-        this.keyboardSpeed = 2.5; // meters/second
-        this.bindKeys();
-        // -------------------------------------------------
-
+        
         const self = this;
         fetch('./college.json')
             .then(response => response.json())
@@ -84,16 +90,13 @@ class App{
         pmremGenerator.compileEquirectangularShader();
         
         const self = this;
-        
         loader.load( './assets/hdr/venice_sunset_1k.hdr', ( texture ) => {
           const envMap = pmremGenerator.fromEquirectangular( texture ).texture;
           pmremGenerator.dispose();
-
           self.scene.environment = envMap;
-
-        }, undefined, (err)=>{
-            console.error( 'An error occurred setting the environment');
-        } );
+        }, undefined, ()=>{
+            console.error( 'An error occurred setting the environment' );
+        });
     }
     
     resize(){
@@ -109,7 +112,6 @@ class App{
         loader.setDRACOLoader( dracoLoader );
         
         const self = this;
-		
 		loader.load(
 			'college.glb',
 			function ( gltf ) {
@@ -142,7 +144,6 @@ class App{
                 college.add( obj );
                 
                 self.loadingBar.visible = false;
-			
                 self.setupXR();
 			},
 			function ( xhr ) {
@@ -161,8 +162,8 @@ class App{
         const self = this;
         const timeoutId = setTimeout( connectionTimeout, 2000 );
         
-        function onSelectStart() { this.userData.selectPressed = true; }
-        function onSelectEnd() { this.userData.selectPressed = false; }
+        function onSelectStart(){ this.userData.selectPressed = true; }
+        function onSelectEnd(){ this.userData.selectPressed = false; }
         function onConnected(){ clearTimeout( timeoutId ); }
         function connectionTimeout(){
             self.useGaze = true;
@@ -193,7 +194,8 @@ class App{
     buildControllers( parent = this.scene ){
         const controllerModelFactory = new XRControllerModelFactory();
         const geometry = new THREE.BufferGeometry().setFromPoints( [ new THREE.Vector3( 0, 0, 0 ), new THREE.Vector3( 0, 0, -1 ) ] );
-        const line = new THREE.Line( geometry ); line.scale.z = 0;
+        const line = new THREE.Line( geometry );
+        line.scale.z = 0;
         
         const controllers = [];
         for(let i=0; i<=1; i++){
@@ -210,17 +212,16 @@ class App{
         return controllers;
     }
 
-    // -------- Keyboard support (W/A/S/D) --------
-    bindKeys(){
+    // === Web: keyboard + mouse yaw ===
+    bindKeyboard(){
         const down = (e)=>{
             const k = e.key.toLowerCase();
-            if (k==='w' || k==='a' || k==='s' || k==='d'){ this.keys[k] = true; e.preventDefault(); }
+            if (k==='w'||k==='a'||k==='s'||k==='d'){ this.keys[k]=true; e.preventDefault(); }
         };
         const up = (e)=>{
             const k = e.key.toLowerCase();
-            if (k==='w' || k==='a' || k==='s' || k==='d'){ this.keys[k] = false; e.preventDefault(); }
+            if (k==='w'||k==='a'||k==='s'||k==='d'){ this.keys[k]=false; e.preventDefault(); }
         };
-        // Listen on both window and document for robustness
         window.addEventListener('keydown', down);
         window.addEventListener('keyup', up);
         document.addEventListener('keydown', down);
@@ -228,7 +229,20 @@ class App{
         window.addEventListener('blur', ()=>{ this.keys.w=this.keys.a=this.keys.s=this.keys.d=false; });
     }
 
-    // Move the dolly using forward/strafe input (WASD) with collision against this.proxy
+    bindMouseLook(){
+        window.addEventListener('mousemove', (e)=>{
+            if (this.renderer.xr.isPresenting) return;
+            if (document.pointerLockElement !== this.renderer.domElement) return;
+            this.yaw -= e.movementX * this.mouseSensitivity; // left/right look
+            this.dolly.rotation.y = this.yaw;
+        });
+        document.addEventListener('pointerlockchange', ()=>{
+            if (document.pointerLockElement !== this.renderer.domElement) {
+                // pointer unlocked; nothing to do
+            }
+        });
+    }
+
     moveDollyByInput(forward=0, strafe=0, dt){
         if (this.proxy === undefined) return;
         if (forward===0 && strafe===0) return;
@@ -236,48 +250,34 @@ class App{
         const wallLimit = 1.3;
         const speed = this.keyboardSpeed;
 
-        // Save original rotation and align dolly with camera yaw for movement basis
-        const originalQ = this.dolly.quaternion.clone();
-        this.dolly.quaternion.copy( this.dummyCam.getWorldQuaternion(this.workingQuaternion) );
-
-        // Basis vectors
-        const forwardVec = new THREE.Vector3();
-        this.dolly.getWorldDirection(forwardVec);
-        forwardVec.negate();          // forward looking direction
+        // Basis from dolly yaw
+        const forwardVec = new THREE.Vector3(0,0,-1).applyQuaternion(this.dolly.quaternion);
         forwardVec.y = 0; forwardVec.normalize();
+        const rightVec = new THREE.Vector3().crossVectors(this.up, forwardVec).normalize(); // right-hand
 
-        const rightVec = new THREE.Vector3().crossVectors(forwardVec, this.up).normalize();
-
-        // Requested movement direction
         const moveDir = new THREE.Vector3()
             .addScaledVector(forwardVec, forward)
             .addScaledVector(rightVec, strafe);
 
-        if (moveDir.lengthSq() === 0){
-            this.dolly.quaternion.copy(originalQ);
-            return;
-        }
+        if (moveDir.lengthSq()===0) return;
         moveDir.normalize();
 
-        // Start point for casts
+        // Start above ground for casts
         let pos = this.dolly.getWorldPosition(this.origin);
         pos.y += 1;
 
         // Forward collision
         this.raycaster.set(pos, moveDir);
-        let blocked = false;
         const step = speed * dt;
         let hit = this.raycaster.intersectObject(this.proxy);
-        if (hit.length>0 && hit[0].distance < wallLimit + step){
-            blocked = true;
-        }
+        let blocked = (hit.length>0 && hit[0].distance < wallLimit + step);
 
         if (!blocked){
             this.dolly.position.addScaledVector(moveDir, step);
             pos = this.dolly.getWorldPosition(this.origin);
         }
 
-        // Side clearance
+        // Side clearance (left)
         const leftWorld = new THREE.Vector3(-1,0,0).applyQuaternion(this.dolly.quaternion).normalize();
         this.raycaster.set(pos, leftWorld);
         hit = this.raycaster.intersectObject(this.proxy);
@@ -285,6 +285,7 @@ class App{
             this.dolly.translateX(wallLimit - hit[0].distance);
         }
 
+        // Side clearance (right)
         const rightWorld = new THREE.Vector3(1,0,0).applyQuaternion(this.dolly.quaternion).normalize();
         this.raycaster.set(pos, rightWorld);
         hit = this.raycaster.intersectObject(this.proxy);
@@ -292,7 +293,7 @@ class App{
             this.dolly.translateX(hit[0].distance - wallLimit);
         }
 
-        // Keep on ground
+        // Keep aligned to ground
         const down = new THREE.Vector3(0,-1,0);
         pos.y += 1.5;
         this.raycaster.set(pos, down);
@@ -300,13 +301,10 @@ class App{
         if (hit.length>0){
             this.dolly.position.copy(hit[0].point);
         }
-
-        // Restore rotation
-        this.dolly.quaternion.copy(originalQ);
     }
-    // --------------------------------------------
+    // ================================
 
-    // Original forward move used by VR controller trigger
+    // Original forward move for VR trigger/gaze
     moveDolly(dt){
         if (this.proxy === undefined) return;
         
@@ -323,49 +321,40 @@ class App{
 		this.raycaster.set(pos, dir);
 		
         let blocked = false;
-		
 		let intersect = this.raycaster.intersectObject(this.proxy);
         if (intersect.length>0){
             if (intersect[0].distance < wallLimit) blocked = true;
         }
-		
 		if (!blocked){
             this.dolly.translateZ(-dt*speed);
             pos = this.dolly.getWorldPosition( this.origin );
 		}
-		
-        //cast left
+        // left
         dir.set(-1,0,0);
         dir.applyMatrix4(this.dolly.matrix);
         dir.normalize();
         this.raycaster.set(pos, dir);
-
         intersect = this.raycaster.intersectObject(this.proxy);
         if (intersect.length>0){
             if (intersect[0].distance<wallLimit) this.dolly.translateX(wallLimit-intersect[0].distance);
         }
-
-        //cast right
+        // right
         dir.set(1,0,0);
         dir.applyMatrix4(this.dolly.matrix);
         dir.normalize();
         this.raycaster.set(pos, dir);
-
         intersect = this.raycaster.intersectObject(this.proxy);
         if (intersect.length>0){
             if (intersect[0].distance<wallLimit) this.dolly.translateX(intersect[0].distance-wallLimit);
         }
-
-        //cast down
+        // down
         dir.set(0,-1,0);
         pos.y += 1.5;
         this.raycaster.set(pos, dir);
-        
         intersect = this.raycaster.intersectObject(this.proxy);
         if (intersect.length>0){
             this.dolly.position.copy( intersect[0].point );
         }
-
         this.dolly.quaternion.copy( quaternion );
 	}
 		
@@ -385,26 +374,26 @@ class App{
         this.boardShown = name;
     }
 
-	render(){
+	render( timestamp, frame ){
         const dt = this.clock.getDelta();
-        
-        // Web: WASD locomotion (works both flat and in-headset if a keyboard is available)
-        const forward = (this.keys.w ? 1 : 0) + (this.keys.s ? -1 : 0);
-        const strafe  = (this.keys.d ? 1 : 0) + (this.keys.a ? -1 : 0);
-        if (forward !== 0 || strafe !== 0){
-            this.moveDollyByInput(forward, strafe, dt);
-        }
 
-        if (this.renderer.xr.isPresenting){
-            // Keep gaze cursor updating, but DO NOT auto-walk
-            if ( this.useGaze && this.gazeController ){
-                this.gazeController.update();
+        // Web (non-VR): WASD movement
+        if (!this.renderer.xr.isPresenting){
+            const forward = (this.keys.w ? 1 : 0) + (this.keys.s ? -1 : 0);
+            const strafe  = (this.keys.d ? 1 : 0) + (this.keys.a ? -1 : 0);
+            if (forward !== 0 || strafe !== 0){
+                this.moveDollyByInput(forward, strafe, dt);
             }
-
-            // Move forward only when controller trigger is pressed
-            if (this.selectPressed){
+        }
+        
+        if (this.renderer.xr.isPresenting){
+            let moveGaze = false;
+            if ( this.useGaze && this.gazeController!==undefined){
+                this.gazeController.update();
+                moveGaze = (this.gazeController.mode == GazeController.Modes.MOVE);
+            }
+            if (this.selectPressed || moveGaze){
                 this.moveDolly(dt);
-
                 if (this.boardData){
                     const scene = this.scene;
                     const dollyPos = this.dolly.getWorldPosition( new THREE.Vector3() );
