@@ -1,4 +1,4 @@
-// app.js — adds WASD movement for web + FPS-style mouse look (yaw + pitch)
+// app.js — WASD movement for web + FPS-style mouse look + Shift sprint (2x)
 import * as THREE from './libs/three/three.module.js';
 import { GLTFLoader } from './libs/three/jsm/GLTFLoader.js';
 import { DRACOLoader } from './libs/three/jsm/DRACOLoader.js';
@@ -47,11 +47,12 @@ class App{
 		container.appendChild( this.renderer.domElement );
         this.setEnvironment();
 	
-        // === Web controls (WASD + FPS mouse look) ===
-        this.keys = { w:false, a:false, s:false, d:false };
-        this.keyboardSpeed = 2.5;           // m/s
-        this.yaw = 0;                       // left/right
-        this.pitch = 0;                     // up/down
+        // === Web controls (WASD + FPS mouse look + Shift sprint) ===
+        this.keys = { w:false, a:false, s:false, d:false, shift:false };
+        this.keyboardSpeed = 2.5;     // m/s (walk)
+        this.sprintMultiplier = 2.0;  // Shift = 2x
+        this.yaw = 0;                 // left/right
+        this.pitch = 0;               // up/down
         this.mouseSensitivity = 0.0025;
         this.maxPitch = Math.PI/2 - 0.01;
 
@@ -64,7 +65,7 @@ class App{
 
         this.bindKeyboard();
         this.bindMouseLook();
-        // ============================================
+        // ===========================================================
 
         window.addEventListener( 'resize', this.resize.bind(this) );
         
@@ -150,7 +151,6 @@ class App{
                 college.add( obj );
                 
                 self.loadingBar.visible = false;
-			
                 self.setupXR();
 			},
 			function ( xhr ) {
@@ -164,24 +164,20 @@ class App{
     
     setupXR(){
         this.renderer.xr.enabled = true;
-
         const btn = new VRButton( this.renderer );
         
         const self = this;
-        
         const timeoutId = setTimeout( connectionTimeout, 2000 );
         
         function onSelectStart(){ this.userData.selectPressed = true; }
         function onSelectEnd(){ this.userData.selectPressed = false; }
         function onConnected(){ clearTimeout( timeoutId ); }
-        
         function connectionTimeout(){
             self.useGaze = true;
             self.gazeController = new GazeController( self.scene, self.dummyCam );
         }
         
         this.controllers = this.buildControllers( this.dolly );
-        
         this.controllers.forEach( ( controller ) =>{
             controller.addEventListener( 'selectstart', onSelectStart );
             controller.addEventListener( 'selectend', onSelectEnd );
@@ -204,13 +200,11 @@ class App{
     
     buildControllers( parent = this.scene ){
         const controllerModelFactory = new XRControllerModelFactory();
-
         const geometry = new THREE.BufferGeometry().setFromPoints( [ new THREE.Vector3( 0, 0, 0 ), new THREE.Vector3( 0, 0, -1 ) ] );
         const line = new THREE.Line( geometry );
         line.scale.z = 0;
         
         const controllers = [];
-        
         for(let i=0; i<=1; i++){
             const controller = this.renderer.xr.getController( i );
             controller.add( line.clone() );
@@ -222,7 +216,6 @@ class App{
             grip.add( controllerModelFactory.createControllerModel( grip ) );
             parent.add( grip );
         }
-        
         return controllers;
     }
 
@@ -230,17 +223,17 @@ class App{
     bindKeyboard(){
         const down = (e)=>{
             const k = e.key.toLowerCase();
-            if (k==='w'||k==='a'||k==='s'||k==='d'){ this.keys[k]=true; e.preventDefault(); }
+            if (k==='w'||k==='a'||k==='s'||k==='d'||k==='shift'){ this.keys[k]=true; e.preventDefault(); }
         };
         const up = (e)=>{
             const k = e.key.toLowerCase();
-            if (k==='w'||k==='a'||k==='s'||k==='d'){ this.keys[k]=false; e.preventDefault(); }
+            if (k==='w'||k==='a'||k==='s'||k==='d'||k==='shift'){ this.keys[k]=false; e.preventDefault(); }
         };
         window.addEventListener('keydown', down);
         window.addEventListener('keyup', up);
         document.addEventListener('keydown', down);
         document.addEventListener('keyup', up);
-        window.addEventListener('blur', ()=>{ this.keys.w=this.keys.a=this.keys.s=this.keys.d=false; });
+        window.addEventListener('blur', ()=>{ this.keys.w=this.keys.a=this.keys.s=this.keys.d=this.keys.shift=false; });
     }
 
     bindMouseLook(){
@@ -263,9 +256,9 @@ class App{
         if (forward===0 && strafe===0) return;
 
         const wallLimit = 1.3;
-        const speed = this.keyboardSpeed;
+        const speed = this.keyboardSpeed * (this.keys.shift ? this.sprintMultiplier : 1);
 
-        // Forward (camera facing on XZ), Right = forward × up
+        // Forward (camera yaw on XZ), Right = forward × up
         const forwardVec = new THREE.Vector3(0,0,-1).applyQuaternion(this.dolly.quaternion);
         forwardVec.y = 0; forwardVec.normalize();
         const rightVec = new THREE.Vector3().crossVectors(forwardVec, this.up).normalize(); // right
@@ -392,7 +385,7 @@ class App{
 	render(){
         const dt = this.clock.getDelta();
 
-        // Web (non-VR): WASD + mouse look
+        // Web (non-VR): WASD + mouse look (+ Shift sprint)
         if (!this.renderer.xr.isPresenting){
             const forward = (this.keys.w ? 1 : 0) + (this.keys.s ? -1 : 0);
             const strafe  = (this.keys.d ? 1 : 0) + (this.keys.a ? -1 : 0);
